@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>MQTT Control</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+</head>
+<body>
+  <h1>SAABRINA</h1>
+
+  <button onclick="sendMessage1()">tænd</button>
+  <button onclick="sendMessage2()">sluk</button>
+
+  <script>
+    // Forbind til HiveMQ Cloud via TLS WebSockets
+    const client = mqtt.connect("wss://74476603474245c3af4012fa421215a2.s1.eu.hivemq.cloud:8884/mqtt", {
+      username: "qwit_ED",
+      password: "Jbd33cxb",
+      clean: true,
+      connectTimeout: 4000,
+      reconnectPeriod: 1000
+    });
+
+    client.on("connect", () => {
+      console.log("Connected to HiveMQ Cloud");
+    });
+
+    function sendMessage1() {
+      client.publish("emil/test", "1");
+      alert("MQTT besked 1 sendt!");
+    }
+
+    function sendMessage2() {
+      client.publish("emil/test", "0");
+      alert("MQTT besked 2 sendt!");
+    }
+  </script>
+</body>
+</html>
