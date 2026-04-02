@@ -113,7 +113,7 @@
     <div class="buttons">
       <button class="on" onclick="sendMessage1()">TÆND</button>
       <button class="off" onclick="sendMessage2()">SLUK</button>
-	  <button class="on" onclick="sendMessage3()">LYD</button>
+	  <button class="on" onclick="goToSoundboard()">SOUNDBOARD</button>
     </div>
 
     <div class="status" id="status">
@@ -158,10 +158,10 @@
       statusEl.textContent = "SLUKKET ⛔";
     }
 	
-	function sendMessage3() {
-	client.publish("emil/test", "3");
-	statusEl.textContent = "LYD AFSENDT 🔊";
+	function goToSoundboard() {
+	window.location.href = "soundboard.html";
 	}
+
   </script>
 </body>
 </html>
