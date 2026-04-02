@@ -113,6 +113,7 @@
     <div class="buttons">
       <button class="on" onclick="sendMessage1()">TÆND</button>
       <button class="off" onclick="sendMessage2()">SLUK</button>
+	  <button class="on" onclick="sendMessage3()">LYD</button>
     </div>
 
     <div class="status" id="status">
@@ -156,6 +157,11 @@
       client.publish("emil/test", "0");
       statusEl.textContent = "SLUKKET ⛔";
     }
+	
+	function sendMessage3() {
+	client.publish("emil/test", "3");
+	statusEl.textContent = "LYD AFSENDT 🔊";
+	}
   </script>
 </body>
 </html>
