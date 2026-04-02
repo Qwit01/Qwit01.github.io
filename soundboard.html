@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SAABRINA Soundboard</title>
+
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: linear-gradient(160deg, #020617, #0f172a);
+      color: #e5e7eb;
+      font-family: system-ui, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 1rem;
+    }
+
+    .card {
+      background: #020617;
+      border-radius: 20px;
+      padding: 2rem;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+      text-align: center;
+    }
+
+    h1 {
+      margin-bottom: 1rem;
+    }
+
+    .buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    button {
+      border: none;
+      border-radius: 16px;
+      padding: 1.25rem;
+      font-size: 1.2rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.1s ease;
+      background: #22c55e;
+      color: #022c22;
+    }
+
+    button:active {
+      transform: scale(0.97);
+    }
+
+    .back {
+      margin-top: 2rem;
+      background: #3b82f6;
+      color: #0c1b33;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="card">
+    <h1>Soundboard</h1>
+
+    <div class="buttons">
+      <button onclick="playSound(3)">LYD 1</button>
+      <button onclick="playSound(4)">LYD 2</button>
+      <button onclick="playSound(5)">LYD 3</button>
+    </div>
+
+    <button class="back" onclick="goBack()">⬅ Tilbage</button>
+  </div>
+
+  <script>
+    const client = mqtt.connect(
+      "wss://74476603474245c3af4012fa421215a2.s1.eu.hivemq.cloud:8884/mqtt",
+      {
+        username: "Qwit_ED",
+        password: "GlemDetDu1",
+        clean: true,
+        connectTimeout: 4000,
+        reconnectPeriod: 1000
+      }
+    );
+
+    function playSound(num) {
+      client.publish("emil/test", String(num));
+    }
+
+    function goBack() {
+      window.location.href = "index.html";
+    }
+  </script>
+</body>
+</html>
