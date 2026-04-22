@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<title>Patient</title>
+
+<style>
+body { font-family:Arial; background:#f5f7fb; padding:20px; }
+
+.box {
+    background:white;
+    padding:15px;
+    border-radius:10px;
+    margin-bottom:20px;
+}
+
+button {
+    padding:8px;
+    margin:5px;
+    cursor:pointer;
+}
+
+textarea {
+    width:100%;
+    height:100px;
+}
+
+.selected {
+    background:#2c7be5;
+    color:white;
+}
+
+.ai-box {
+    background:#eef5ff;
+    padding:10px;
+    border-radius:5px;
+    margin-top:10px;
+}
+
+.edit-box {
+    background:#f0f4ff;
+    padding:10px;
+    border-radius:8px;
+    margin-top:10px;
+}
+
+.sort-btn {
+    background:#ddd;
+    border-radius:5px;
+}
+.sort-btn.active {
+    background:#2c7be5;
+    color:white;
+}
+</style>
+</head>
+
+<body>
+
+<button onclick="goBack()">← Tilbage</button>
+
+<h1 id="patientName"></h1>
+
+<!-- Opret POP -->
+<div class="box">
+    <h2>Opret POP</h2>
+
+    <p>1. Vælg kategori:</p>
+
+    <button onclick="selectCategory(this,'Smerter')">Smerter</button>
+    <button onclick="selectCategory(this,'Infektion')">Infektion</button>
+    <button onclick="selectCategory(this,'Respiration')">Respiration</button>
+
+    <p id="selectedCategory"></p>
+
+    <p>2. Skriv note:</p>
+    <textarea id="manualText" placeholder="Skriv note til POP..."></textarea>
+
+    <br>
+    <button onclick="saveManualPOP()">Bekræft POP</button>
+</div>
+
+<!-- Fritekst + AI -->
+<div class="box">
+    <h2>Fritekst analyse</h2>
+
+    <textarea id="inputText" placeholder="Skriv observation..."></textarea>
+    <br>
+    <button onclick="analyzeText()">Analyser</button>
+
+    <div id="aiOutput" class="ai-box" style="display:none;"></div>
+
+    <button id="saveBtn" style="display:none;" onclick="saveAI()">Gem som POP</button>
+</div>
+
+<!-- Liste -->
+<div class="box">
+    <h2>Alle POP'er</h2>
+
+    <!-- SORTERING -->
+    <div style="margin-bottom:10px;">
+        <button class="sort-btn active" onclick="setSort('alle', this)">Alle</button>
+        <button class="sort-btn" onclick="setSort('Smerter', this)">Smerter</button>
+        <button class="sort-btn" onclick="setSort('Infektion', this)">Infektion</button>
+        <button class="sort-btn" onclick="setSort('Respiration', this)">Respiration</button>
+    </div>
+
+    <div id="popList"></div>
+</div>
+
+<script>
+
+// ===== DATABASE =====
+function getPatients() {
+    return JSON.parse(localStorage.getItem("patients")) || [];
+}
+
+function savePatients(data) {
+    localStorage.setItem("patients", JSON.stringify(data));
+}
+
+// ===== LOAD PATIENT VIA URL =====
+const urlParams = new URLSearchParams(window.location.search);
+const id = parseInt(urlParams.get("id"));   // ← HENTER ID FRA URL
+
+function getPatientIndex() {
+    return getPatients().findIndex(p => p.id === id);
+}
+
+function getCurrentPatient() {
+    return getPatients()[getPatientIndex()];
+}
+
+// ===== SORTERING =====
+let currentSort = "alle";
+
+function setSort(type, btn) {
+    currentSort = type;
+
+    document.querySelectorAll(".sort-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+
+    renderPOPs();
+}
+
+// ===== VIS NAVN =====
+function renderPatientName() {
+    const patient = getCurrentPatient();
+    document.getElementById("patientName").innerText = patient.name;
+}
+
+// ===== VIS POP LISTE =====
+function renderPOPs() {
+    const patient = getCurrentPatient();
+    const div = document.getElementById("popList");
+    div.innerHTML = "";
+
+    if(!patient.pops || patient.pops.length === 0) {
+        div.innerHTML = "<p>Ingen POP'er endnu</p>";
+        return;
+    }
+
+    // SORTÉR NYESTE ØVERST
+    let pops = [...patient.pops]
+        .map((p, i) => ({ ...p, originalIndex: i }))
+        .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    // FILTRÉR EFTER KATEGORI
+    if(currentSort !== "alle") {
+        pops = pops.filter(p => p.type === currentSort);
+    }
+
+    pops.forEach((p) => {
+        div.innerHTML += `
+        <div style="margin-bottom:15px; padding:10px; border:1px solid #eee; border-radius:8px;">
+            
+            <b>${p.type}</b><br>
+
+            <b>Beskrivelse:</b><br>
+            ${p.text || "Ingen tekst"}<br><br>
+
+            ${p.rawText ? `
+            <b>Fritekst (AI input):</b><br>
+            <i>${p.rawText}</i><br><br>
+            ` : ""}
+
+            <small>${new Date(p.date).toLocaleString()}</small><br><br>
+
+            <button onclick="editPOP(${p.originalIndex})">Rediger</button>
+
+            <div id="editBox-${p.originalIndex}" class="edit-box" style="display:none;">
+                <h4>Rediger POP</h4>
+
+                <label>Kategori:</label><br>
+                <input id="editType-${p.originalIndex}" value="${p.type}" style="width:100%;"><br><br>
+
+                <label>Beskrivelse:</label><br>
+                <textarea id="editText-${p.originalIndex}">${p.text}</textarea><br>
+
+                <button onclick="saveEdit(${p.originalIndex})">Gem ændringer</button>
+                <button onclick="cancelEdit(${p.originalIndex})">Fortryd</button>
+            </div>
+
+        </div>
+        `;
+    });
+}
+
+// ===== REDIGER POP =====
+function editPOP(index) {
+    document.getElementById(`editBox-${index}`).style.display = "block";
+}
+
+function cancelEdit(index) {
+    document.getElementById(`editBox-${index}`).style.display = "none";
+}
+
+function saveEdit(index) {
+    let patients = getPatients();
+    let pIndex = getPatientIndex();
+
+    const newType = document.getElementById(`editType-${index}`).value;
+    const newText = document.getElementById(`editText-${index}`).value;
+
+    patients[pIndex].pops[index].type = newType;
+    patients[pIndex].pops[index].text = newText;
+
+    savePatients(patients);
+    renderPOPs();
+}
+
+// ===== MANUEL POP FLOW =====
+let selectedCategory = "";
+
+function selectCategory(btn, type) {
+    selectedCategory = type;
+
+    document.querySelectorAll(".box button").forEach(b => b.classList.remove("selected"));
+    btn.classList.add("selected");
+
+    document.getElementById("selectedCategory").innerText = "Valgt: " + type;
+}
+
+function saveManualPOP() {
+    if(!selectedCategory) {
+        alert("Vælg en kategori");
+        return;
+    }
+
+    const text = document.getElementById("manualText").value;
+
+    if(!text) {
+        alert("Skriv en note");
+        return;
+    }
+
+    let patients = getPatients();
+    let index = getPatientIndex();
+
+    const newPOP = {
+        type: selectedCategory,
+        text: text,
+        rawText: "",
+        date: new Date().toISOString()
+    };
+
+    patients[index].pops.push(newPOP);
+    savePatients(patients);
+
+    document.getElementById("manualText").value = "";
+    document.getElementById("selectedCategory").innerText = "";
+    selectedCategory = "";
+
+    renderPOPs();
+}
+
+// ===== AI ANALYSE =====
+let aiResult = null;
+
+function analyzeText() {
+    let text = document.getElementById("inputText").value.toLowerCase();
+    let output = document.getElementById("aiOutput");
+
+    if(!text) return;
+
+    let result = {
+        type: "Observation",
+        text: "Ingen forslag"
+    };
+
+    if(text.includes("smerte")) {
+        result = {
+            type: "Smerter",
+            text: "Patient har smerter. Giv smertestillende og observer effekt."
+        };
+    }
+    else if(text.includes("feber")) {
+        result = {
+            type: "Infektion",
+            text: "Mulig infektion. Mål temperatur og overvåg."
+        };
+    }
+    else if(text.includes("vejrtrækning")) {
+        result = {
+            type: "Respiration",
+            text: "Problemer med vejrtrækning. Overvåg saturation."
+        };
+    }
+
+    aiResult = result;
+
+    output.style.display = "block";
+    output.innerHTML = `
+        <b>AI forslag:</b><br>
+        Problem: ${result.type}<br>
+        ${result.text}
+    `;
+
+    document.getElementById("saveBtn").style.display = "inline-block";
+}
+
+// ===== GEM AI =====
+function saveAI() {
+    if(!aiResult) return;
+
+    let patients = getPatients();
+    let index = getPatientIndex();
+
+    const rawText = document.getElementById("inputText").value;
+
+    const newPOP = {
+        type: aiResult.type,
+        text: aiResult.text,
+        rawText: rawText,
+        date: new Date().toISOString()
+    };
+
+    patients[index].pops.push(newPOP);
+    savePatients(patients);
+
+    document.getElementById("inputText").value = "";
+    document.getElementById("aiOutput").style.display = "none";
+    document.getElementById("saveBtn").style.display = "none";
+
+    aiResult = null;
+
+    renderPOPs();
+}
+
+// ===== NAVIGATION =====
+function goBack() {
+    window.location.href = "index.html";
+}
+
+// INIT
+renderPatientName();
+renderPOPs();
+
+</script>
+
+</body>
+</html>
