@@ -56,8 +56,6 @@
     stroke-width: 3;
     stroke-linecap: round;
     filter: drop-shadow(0 0 6px rgba(255,176,32,0.6));
-    transform-origin: 150px 150px;
-    transition: transform 0.12s linear;
   }
   .hub { fill: var(--panel); stroke: var(--line); stroke-width: 2; }
   .readout {
@@ -120,6 +118,64 @@
     line-height: 1.6;
     letter-spacing: 0.02em;
   }
+  .dot.test { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+  .test-panel {
+    width: min(72vw, 340px);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 14px 16px;
+    background: var(--panel);
+    display: none;
+  }
+  .test-panel.open { display: block; }
+  .test-panel-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    color: var(--dim);
+    letter-spacing: 0.1em;
+    margin-bottom: 8px;
+  }
+  .test-panel input[type="range"] {
+    width: 100%;
+    accent-color: var(--amber);
+  }
+  .test-presets {
+    display: flex;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .test-presets button {
+    flex: 1;
+    appearance: none;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 11px;
+    padding: 6px 0;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .test-presets button:active { background: var(--amber-dim); }
+  #testModeBtn {
+    appearance: none;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--dim);
+    font-family: inherit;
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    padding: 8px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    text-transform: uppercase;
+  }
+  #testModeBtn.on {
+    color: var(--amber);
+    border-color: var(--amber-dim);
+  }
 </style>
 </head>
 <body>
@@ -143,6 +199,21 @@
   <div class="status-row">
     <div class="dot" id="gpsDot"></div>
     <span id="statusText">GPS INAKTIV</span>
+    <button id="testModeBtn">Testtilstand</button>
+  </div>
+
+  <div class="test-panel" id="testPanel">
+    <div class="test-panel-row">
+      <span>SIMULERET HASTIGHED</span>
+      <span id="testSpeedLabel">0 KM/H</span>
+    </div>
+    <input type="range" id="testSlider" min="0" max="220" value="0" step="1">
+    <div class="test-presets">
+      <button data-v="0">Stop</button>
+      <button data-v="50">50</button>
+      <button data-v="100">100</button>
+      <button data-v="150">150</button>
+    </div>
   </div>
 
   <button id="toggle">Start motor</button>
@@ -183,16 +254,28 @@
   }
   setNeedle(0.06);
 
-  // ---- gear thresholds (km/h) ----
-  const gearSpeeds = [0, 22, 45, 72, 105, 145, 190, 999];
+  // ---- gear thresholds (km/h) — 6 gears, gear 4 kicks in at 50 km/h ----
+  const gearStarts = [0, 16, 32, 50, 76, 112];
+  const topCap = 200; // upper bound used for gear 6's range
   function gearInfo(speed) {
     let g = 1;
-    for (let i = 1; i < gearSpeeds.length; i++) {
-      if (speed >= gearSpeeds[i]) g = i + 1; else break;
+    for (let i = 1; i < gearStarts.length; i++) {
+      if (speed >= gearStarts[i]) g = i + 1; else break;
     }
-    g = Math.min(g, gearSpeeds.length - 1);
-    const lo = gearSpeeds[g - 1], hi = gearSpeeds[g];
-    const frac = Math.max(0, Math.min(1, (speed - lo) / (hi - lo)));
+    g = Math.min(g, gearStarts.length);
+    const lo = gearStarts[g - 1];
+    const hi = g < gearStarts.length ? gearStarts[g] : topCap;
+    const fracRaw = Math.max(0, Math.min(1, (speed - lo) / (hi - lo)));
+
+    // Compress the rpm range per gear so upshifts don't fall all the way to
+    // idle and downshifts don't fly all the way to redline. Gear 1 gets the
+    // full range since it covers launch from a standstill.
+    let frac;
+    if (g === 1) {
+      frac = 0.05 + fracRaw * 0.9;
+    } else {
+      frac = 0.35 + fracRaw * 0.57;
+    }
     return { gear: g, frac };
   }
 
@@ -307,6 +390,9 @@
   let lastPos = null, lastTime = null;
   let smoothedSpeed = 0; // km/h
   let smoothedAccel = 0; // km/h per second, clamped display value
+  let testMode = false;
+  let testInterval = null;
+  let lastTestTime = null;
 
   function haversine(lat1, lon1, lat2, lon2) {
     const R = 6371000;
@@ -317,9 +403,21 @@
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   }
 
+  // shared by GPS and test mode: feed one raw speed sample + how long since
+  // the last sample, update the smoothed speed/acceleration used for audio
+  function feedSpeedSample(rawSpeedKmh, dtSec) {
+    if (rawSpeedKmh === null || !isFinite(rawSpeedKmh)) return;
+    dtSec = Math.max(0.15, dtSec || 1);
+    const accel = (rawSpeedKmh - smoothedSpeed) / dtSec;
+    smoothedAccel = smoothedAccel * 0.5 + accel * 0.5;
+    smoothedSpeed = smoothedSpeed * 0.5 + rawSpeedKmh * 0.5;
+  }
+
   function onPosition(pos) {
+    if (testMode) return; // ignore real GPS while simulating
+
     gpsDot.classList.add('live');
-    gpsDot.classList.remove('err');
+    gpsDot.classList.remove('err', 'test');
     statusText.textContent = 'GPS AKTIV';
 
     const now = pos.timestamp;
@@ -335,18 +433,15 @@
       }
     }
 
-    if (rawSpeedKmh !== null && isFinite(rawSpeedKmh)) {
-      const dtSec = lastTime ? Math.max(0.2, (now - lastTime) / 1000) : 1;
-      const accel = (rawSpeedKmh - smoothedSpeed) / dtSec;
-      smoothedAccel = smoothedAccel * 0.6 + accel * 0.4;
-      smoothedSpeed = smoothedSpeed * 0.65 + rawSpeedKmh * 0.35;
-    }
+    const dtSec = lastTime ? (now - lastTime) / 1000 : 1;
+    feedSpeedSample(rawSpeedKmh, dtSec);
 
     lastPos = pos.coords;
     lastTime = now;
   }
 
   function onGpsError(err) {
+    if (testMode) return;
     gpsDot.classList.remove('live');
     gpsDot.classList.add('err');
     statusText.textContent = 'GPS FEJL: ' + (err.message || 'ukendt');
@@ -354,8 +449,10 @@
 
   function startGps() {
     if (!('geolocation' in navigator)) {
-      statusText.textContent = 'GPS IKKE TILGÆNGELIG';
-      gpsDot.classList.add('err');
+      if (!testMode) {
+        statusText.textContent = 'GPS IKKE TILGÆNGELIG';
+        gpsDot.classList.add('err');
+      }
       return;
     }
     watchId = navigator.geolocation.watchPosition(onPosition, onGpsError, {
@@ -368,13 +465,14 @@
     if (watchId !== null) navigator.geolocation.clearWatch(watchId);
     watchId = null;
     lastPos = null; lastTime = null;
-    gpsDot.classList.remove('live', 'err');
-    statusText.textContent = 'GPS INAKTIV';
+    if (!testMode) {
+      gpsDot.classList.remove('live', 'err');
+      statusText.textContent = 'GPS INAKTIV';
+    }
   }
 
   // ---- render / animation loop ----
   let rafId = null;
-  const gearNames = { 1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7' };
 
   function tick() {
     const speed = Math.max(0, smoothedSpeed);
@@ -384,7 +482,7 @@
     const rpmFrac = Math.max(0.05, frac);
 
     kmhEl.textContent = Math.round(speed);
-    gearEl.textContent = gearNames[gear] || gear;
+    gearEl.textContent = speed < 2 ? 'N' : String(gear);
     setNeedle(rpmFrac);
 
     if (running) applyEngineState(rpmFrac, throttle, speed);
@@ -392,6 +490,52 @@
     rafId = requestAnimationFrame(tick);
   }
   tick();
+
+  // ---- test mode (simulate speed without GPS, e.g. at your desk) ----
+  const testModeBtn = document.getElementById('testModeBtn');
+  const testPanel = document.getElementById('testPanel');
+  const testSlider = document.getElementById('testSlider');
+  const testSpeedLabel = document.getElementById('testSpeedLabel');
+
+  testSlider.addEventListener('input', () => {
+    testSpeedLabel.textContent = testSlider.value + ' KM/H';
+  });
+
+  document.querySelectorAll('.test-presets button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      testSlider.value = btn.dataset.v;
+      testSpeedLabel.textContent = btn.dataset.v + ' KM/H';
+    });
+  });
+
+  testModeBtn.addEventListener('click', () => {
+    testMode = !testMode;
+    testModeBtn.classList.toggle('on', testMode);
+    testPanel.classList.toggle('open', testMode);
+
+    if (testMode) {
+      gpsDot.classList.remove('live', 'err');
+      gpsDot.classList.add('test');
+      statusText.textContent = 'TEST-TILSTAND';
+      lastTestTime = Date.now();
+      testInterval = setInterval(() => {
+        const now = Date.now();
+        const dtSec = (now - lastTestTime) / 1000;
+        feedSpeedSample(Number(testSlider.value), dtSec);
+        lastTestTime = now;
+      }, 150);
+    } else {
+      clearInterval(testInterval);
+      testInterval = null;
+      gpsDot.classList.remove('test');
+      if (watchId !== null) {
+        gpsDot.classList.add('live');
+        statusText.textContent = 'GPS AKTIV';
+      } else {
+        statusText.textContent = 'GPS INAKTIV';
+      }
+    }
+  });
 
   // ---- toggle button ----
   toggleBtn.addEventListener('click', () => {
