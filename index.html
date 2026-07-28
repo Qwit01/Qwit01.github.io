@@ -159,6 +159,18 @@
     cursor: pointer;
   }
   .test-presets button:active { background: var(--amber-dim); }
+  .test-presets button.on {
+    border-color: var(--amber-dim);
+    color: var(--amber);
+    background: rgba(255,176,32,0.08);
+  }
+  .sound-panel {
+    width: min(72vw, 340px);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 14px 16px;
+    background: var(--panel);
+  }
   #testModeBtn {
     appearance: none;
     border: 1px solid var(--line);
@@ -211,8 +223,19 @@
     <div class="test-presets">
       <button data-v="0">Stop</button>
       <button data-v="50">50</button>
-      <button data-v="100">100</button>
-      <button data-v="150">150</button>
+      <button data-v="80">80</button>
+      <button data-v="130">130</button>
+    </div>
+  </div>
+
+  <div class="sound-panel">
+    <div class="test-panel-row">
+      <span>MOTORLYD</span>
+    </div>
+    <div class="test-presets" id="profileButtons">
+      <button data-profile="standard" class="on">Standard</button>
+      <button data-profile="rs3">RS3 5-cyl</button>
+      <button data-profile="r8">R8 V10</button>
     </div>
   </div>
 
@@ -254,9 +277,11 @@
   }
   setNeedle(0.06);
 
-  // ---- gear thresholds (km/h) — 6 gears, gear 4 kicks in at 50 km/h ----
-  const gearStarts = [0, 16, 32, 50, 76, 112];
-  const topCap = 200; // upper bound used for gear 6's range
+  // ---- gear thresholds (km/h) — 6 gears, tuned so the common Danish speed
+  // limits (50 / 80 / 130) land partway up the rev range of their gear
+  // instead of right at the bottom just after a shift ----
+  const gearStarts = [0, 14, 28, 42, 64, 95];
+  const topCap = 175; // upper bound used for gear 6's range
   function gearInfo(speed) {
     let g = 1;
     for (let i = 1; i < gearStarts.length; i++) {
@@ -279,9 +304,50 @@
     return { gear: g, frac };
   }
 
+  // ---- sound profiles ----
+  // Each profile is a stylised synthesis recipe, not a sample of the real
+  // car. RS3 gets a warble layer (two summed LFOs on the tone's gain) to
+  // approximate the off-beat "5-cylinder gurgle"; R8 leans on more oscillator
+  // layers and almost no warble for a smoother, higher-revving scream.
+  const PROFILES = {
+    standard: {
+      label: 'Standard',
+      idleHz: 42, redlineHz: 210,
+      waveforms: ['sawtooth', 'sawtooth', 'square', 'sawtooth'],
+      detune: [1, 1.006, 0.5, 1.010],
+      subMix: 0.9, harmonicMix: 0.0,
+      warbleDepth: 0, warbleRateMul: 0,
+      filterBase: 300, filterSpan: 2600, filterThrottle: 900,
+      noiseMax: 0.35,
+    },
+    rs3: {
+      label: 'Audi RS3 (5-cyl)',
+      idleHz: 55, redlineHz: 260,
+      waveforms: ['sawtooth', 'sawtooth', 'square', 'sawtooth'],
+      detune: [1, 1.004, 0.5, 1.011],
+      subMix: 0.8, harmonicMix: 0.3,
+      warbleDepth: 0.32, warbleRateMul: 0.62,
+      filterBase: 260, filterSpan: 3400, filterThrottle: 1100,
+      noiseMax: 0.3,
+    },
+    r8: {
+      label: 'Audi R8 (V10)',
+      idleHz: 48, redlineHz: 340,
+      waveforms: ['sawtooth', 'sawtooth', 'sawtooth', 'sawtooth'],
+      detune: [1, 1.003, 0.5, 1.008],
+      subMix: 0.55, harmonicMix: 0.5,
+      warbleDepth: 0.06, warbleRateMul: 0.3,
+      filterBase: 420, filterSpan: 4200, filterThrottle: 1400,
+      noiseMax: 0.25,
+    },
+  };
+  let currentProfileKey = 'standard';
+  let currentProfile = PROFILES.standard;
+
   // ---- audio engine ----
   let audioCtx = null;
-  let master, saw1, saw2, sub, filter, noiseSrc, noiseFilter, noiseGain, lfo, lfoGain;
+  let master, saw1, saw2, sub, saw3, filter, noiseSrc, noiseFilter, noiseGain, lfo, lfoGain;
+  let subGain, harmonicGain, tremoloGain, warbleLfo1, warbleLfo2, warbleDepthGain1, warbleDepthGain2;
   let running = false;
 
   function buildAudio() {
@@ -291,7 +357,7 @@
     master.gain.value = 0;
     master.connect(audioCtx.destination);
 
-    // main tone: two detuned sawtooths
+    // main tone layers
     saw1 = audioCtx.createOscillator();
     saw1.type = 'sawtooth';
     saw1.frequency.value = 60;
@@ -304,20 +370,54 @@
     sub = audioCtx.createOscillator();
     sub.type = 'square';
     sub.frequency.value = 30;
+    subGain = audioCtx.createGain();
+    subGain.gain.value = currentProfile.subMix;
+
+    // extra harmonic layer, mixed in per profile for extra richness (V10)
+    saw3 = audioCtx.createOscillator();
+    saw3.type = 'sawtooth';
+    saw3.frequency.value = 60.8;
+    harmonicGain = audioCtx.createGain();
+    harmonicGain.gain.value = currentProfile.harmonicMix;
 
     filter = audioCtx.createBiquadFilter();
     filter.type = 'lowpass';
     filter.frequency.value = 500;
     filter.Q.value = 1.2;
 
+    // tremolo/warble stage: amplitude-modulates the tone to approximate an
+    // uneven firing rhythm. Depth is 0 for profiles that don't need it.
+    tremoloGain = audioCtx.createGain();
+    tremoloGain.gain.value = 1;
+
     const toneGain = audioCtx.createGain();
     toneGain.gain.value = 0.9;
 
     saw1.connect(filter);
     saw2.connect(filter);
-    sub.connect(filter);
-    filter.connect(toneGain);
+    sub.connect(subGain);
+    subGain.connect(filter);
+    saw3.connect(harmonicGain);
+    harmonicGain.connect(filter);
+    filter.connect(tremoloGain);
+    tremoloGain.connect(toneGain);
     toneGain.connect(master);
+
+    warbleLfo1 = audioCtx.createOscillator();
+    warbleLfo1.type = 'sine';
+    warbleLfo1.frequency.value = 8;
+    warbleDepthGain1 = audioCtx.createGain();
+    warbleDepthGain1.gain.value = 0;
+    warbleLfo1.connect(warbleDepthGain1);
+    warbleDepthGain1.connect(tremoloGain.gain);
+
+    warbleLfo2 = audioCtx.createOscillator();
+    warbleLfo2.type = 'sine';
+    warbleLfo2.frequency.value = 20;
+    warbleDepthGain2 = audioCtx.createGain();
+    warbleDepthGain2.gain.value = 0;
+    warbleLfo2.connect(warbleDepthGain2);
+    warbleDepthGain2.connect(tremoloGain.gain);
 
     // idle wobble LFO on filter cutoff
     lfo = audioCtx.createOscillator();
@@ -348,8 +448,10 @@
     noiseFilter.connect(noiseGain);
     noiseGain.connect(master);
 
-    [saw1, saw2, sub, lfo, noiseSrc].forEach(n => n.start());
+    [saw1, saw2, sub, saw3, lfo, warbleLfo1, warbleLfo2, noiseSrc].forEach(n => n.start());
     master.gain.setTargetAtTime(0.55, audioCtx.currentTime, 0.4);
+
+    applyProfile(currentProfileKey);
   }
 
   function stopAudio() {
@@ -357,32 +459,55 @@
     const now = audioCtx.currentTime;
     master.gain.setTargetAtTime(0, now, 0.15);
     setTimeout(() => {
-      [saw1, saw2, sub, lfo, noiseSrc].forEach(n => { try { n.stop(); } catch (e) {} });
+      [saw1, saw2, sub, saw3, lfo, warbleLfo1, warbleLfo2, noiseSrc].forEach(n => { try { n.stop(); } catch (e) {} });
       audioCtx.close();
       audioCtx = null;
     }, 400);
+  }
+
+  // switch the active car sound. Safe to call whether or not audio is running.
+  function applyProfile(key) {
+    currentProfileKey = key;
+    currentProfile = PROFILES[key];
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    const p = currentProfile;
+    saw1.type = p.waveforms[0];
+    saw2.type = p.waveforms[1];
+    sub.type = p.waveforms[2];
+    saw3.type = p.waveforms[3];
+    subGain.gain.setTargetAtTime(p.subMix, now, 0.25);
+    harmonicGain.gain.setTargetAtTime(p.harmonicMix, now, 0.25);
+    warbleDepthGain1.gain.setTargetAtTime(p.warbleDepth * 0.7, now, 0.25);
+    warbleDepthGain2.gain.setTargetAtTime(p.warbleDepth * 0.3, now, 0.25);
   }
 
   // map engine "rpm fraction" (0..1 within current gear) + throttle punch to audio params
   function applyEngineState(rpmFrac, throttle, speedKmh) {
     if (!audioCtx) return;
     const now = audioCtx.currentTime;
-    const idle = 42, redline = 210;
-    const baseFreq = idle + rpmFrac * (redline - idle);
+    const p = currentProfile;
+    const baseFreq = p.idleHz + rpmFrac * (p.redlineHz - p.idleHz);
     const punch = throttle * 18;
+    const d = p.detune;
 
-    saw1.frequency.setTargetAtTime(baseFreq + punch, now, 0.05);
-    saw2.frequency.setTargetAtTime((baseFreq + punch) * 1.006, now, 0.05);
-    sub.frequency.setTargetAtTime((baseFreq + punch) / 2, now, 0.05);
+    saw1.frequency.setTargetAtTime((baseFreq + punch) * d[0], now, 0.05);
+    saw2.frequency.setTargetAtTime((baseFreq + punch) * d[1], now, 0.05);
+    sub.frequency.setTargetAtTime((baseFreq + punch) * d[2], now, 0.05);
+    saw3.frequency.setTargetAtTime((baseFreq + punch) * d[3], now, 0.05);
 
-    const cutoff = 300 + rpmFrac * 2600 + throttle * 900;
+    const cutoff = p.filterBase + rpmFrac * p.filterSpan + throttle * p.filterThrottle;
     filter.frequency.setTargetAtTime(cutoff, now, 0.08);
 
-    const noiseLevel = Math.min(0.35, (speedKmh / 220) * 0.35);
+    const noiseLevel = Math.min(p.noiseMax, (speedKmh / 220) * p.noiseMax);
     noiseGain.gain.setTargetAtTime(noiseLevel, now, 0.3);
     noiseFilter.frequency.setTargetAtTime(500 + speedKmh * 12, now, 0.3);
 
     lfoGain.gain.setTargetAtTime(speedKmh < 5 ? 15 : 4, now, 0.3);
+
+    // warble/firing rhythm rate rises with rpm, like a real firing frequency
+    warbleLfo1.frequency.setTargetAtTime(4 + rpmFrac * baseFreq * p.warbleRateMul, now, 0.1);
+    warbleLfo2.frequency.setTargetAtTime(10 + rpmFrac * baseFreq * p.warbleRateMul * 2.3, now, 0.1);
   }
 
   // ---- GPS tracking ----
@@ -490,6 +615,15 @@
     rafId = requestAnimationFrame(tick);
   }
   tick();
+
+  // ---- sound profile buttons ----
+  document.querySelectorAll('#profileButtons button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#profileButtons button').forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+      applyProfile(btn.dataset.profile);
+    });
+  });
 
   // ---- test mode (simulate speed without GPS, e.g. at your desk) ----
   const testModeBtn = document.getElementById('testModeBtn');
