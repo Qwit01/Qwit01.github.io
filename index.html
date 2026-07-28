@@ -1,194 +1,417 @@
 <!DOCTYPE html>
 <html lang="da">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SAABRINA Control</title>
-
-  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
-
-  <style>
-    :root {
-      --bg: #0f172a;
-      --card: #020617;
-      --on: #22c55e;
-      --off: #ef4444;
-      --text: #e5e7eb;
-      --muted: #94a3b8;
-    }
-
-    * {
-      box-sizing: border-box;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-    }
-
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background: linear-gradient(160deg, #020617, #0f172a);
-      color: var(--text);
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      padding: 1rem;
-    }
-
-    .card {
-      background: var(--card);
-      border-radius: 20px;
-      padding: 2rem;
-      width: 100%;
-      max-width: 420px;
-      box-shadow: 0 20px 40px rgba(0,0,0,0.4);
-      text-align: center;
-    }
-
-    h1 {
-      margin: 0 0 0.25rem;
-      font-size: 2rem;
-      letter-spacing: 0.1em;
-    }
-
-    .subtitle {
-      color: var(--muted);
-      margin-bottom: 2rem;
-    }
-
-    .buttons {
-      display: flex;
-      gap: 1rem;
-      flex-direction: column;
-    }
-
-    button {
-      border: none;
-      border-radius: 16px;
-      padding: 1.25rem;
-      font-size: 1.2rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: transform 0.1s ease, box-shadow 0.1s ease;
-    }
-
-    button:active {
-      transform: scale(0.97);
-    }
-
-    .on {
-      background: var(--on);
-      color: #022c22;
-      box-shadow: 0 8px 20px rgba(34,197,94,0.35);
-    }
-
-    .off {
-      background: var(--off);
-      color: #450a0a;
-      box-shadow: 0 8px 20px rgba(239,68,68,0.35);
-    }
-
-    .blue {
-      background: #3b82f6;
-      color: #0c1b33;
-      box-shadow: 0 8px 20px rgba(59,130,246,0.35);
-    }
-
-    .status {
-      margin-top: 1.5rem;
-      font-size: 0.9rem;
-      color: var(--muted);
-    }
-
-    .temp-box {
-      margin-top: 1.5rem;
-      font-size: 1.4rem;
-      font-weight: 600;
-      color: #38bdf8;
-    }
-
-    @media (min-width: 600px) {
-      .buttons {
-        flex-direction: row;
-      }
-
-      button {
-        flex: 1;
-      }
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>ENGINE SYNTH</title>
+<style>
+  @font-face {
+    font-family: 'DashMono';
+    src: local('JetBrains Mono'), local('Courier New');
+  }
+  :root {
+    --bg: #0a0c0e;
+    --panel: #14181c;
+    --line: #2a3138;
+    --text: #e8ecef;
+    --dim: #6b7680;
+    --amber: #ffb020;
+    --amber-dim: #7a5518;
+    --red: #ff3b30;
+    --green: #3ddc84;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DashMono', 'JetBrains Mono', 'Courier New', monospace;
+    overflow: hidden;
+    user-select: none;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 28px;
+    padding: 24px;
+  }
+  .eyebrow {
+    letter-spacing: 0.35em;
+    font-size: 11px;
+    color: var(--dim);
+    text-transform: uppercase;
+  }
+  .gauge-wrap {
+    position: relative;
+    width: min(72vw, 340px);
+    height: min(72vw, 340px);
+  }
+  svg { width: 100%; height: 100%; display: block; }
+  .tick { stroke: var(--line); stroke-width: 2; }
+  .tick.hot { stroke: var(--red); }
+  .needle {
+    stroke: var(--amber);
+    stroke-width: 3;
+    stroke-linecap: round;
+    filter: drop-shadow(0 0 6px rgba(255,176,32,0.6));
+    transform-origin: 150px 150px;
+    transition: transform 0.12s linear;
+  }
+  .hub { fill: var(--panel); stroke: var(--line); stroke-width: 2; }
+  .readout {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, 10%);
+    text-align: center;
+  }
+  .kmh { font-size: 44px; font-weight: 700; line-height: 1; letter-spacing: -1px; }
+  .kmh-unit { font-size: 11px; color: var(--dim); letter-spacing: 0.2em; margin-top: 4px; }
+  .gear {
+    position: absolute;
+    top: 22%; left: 50%;
+    transform: translate(-50%, 0);
+    font-size: 13px;
+    color: var(--amber);
+    letter-spacing: 0.15em;
+  }
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--dim);
+    letter-spacing: 0.1em;
+    min-height: 16px;
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--dim);
+    transition: background 0.3s;
+  }
+  .dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .dot.err { background: var(--red); box-shadow: 0 0 8px var(--red); }
+  button#toggle {
+    appearance: none;
+    border: 1px solid var(--amber-dim);
+    background: linear-gradient(180deg, #1b1409, #100c05);
+    color: var(--amber);
+    font-family: inherit;
+    font-size: 15px;
+    letter-spacing: 0.25em;
+    padding: 18px 46px;
+    border-radius: 4px;
+    cursor: pointer;
+    text-transform: uppercase;
+  }
+  button#toggle:active { transform: translateY(1px); }
+  button#toggle.on {
+    color: #0a0c0e;
+    background: var(--amber);
+    border-color: var(--amber);
+    box-shadow: 0 0 24px rgba(255,176,32,0.45);
+  }
+  .note {
+    max-width: 320px;
+    text-align: center;
+    font-size: 11px;
+    color: var(--dim);
+    line-height: 1.6;
+    letter-spacing: 0.02em;
+  }
+</style>
 </head>
-
 <body>
-  <div class="card">
-    <h1>SAABRINA</h1>
-    <div class="subtitle">@carbage_9760</div>
 
-    <div class="buttons">
-      <button class="on" onclick="sendMessage1()">TÆND</button>
-      <button class="off" onclick="sendMessage2()">SLUK</button>
-      <button class="blue" onclick="goToSoundboard()">SOUNDBOARD</button>
-    </div>
+  <div class="eyebrow">FAKE EXHAUST · GPS SYNC</div>
 
-    <!-- 🔥 LIVE TEMPERATUR -->
-    <div class="temp-box">
-      Temperatur: <span id="temp">–</span> °C
-    </div>
-
-    <div class="status" id="status">
-      Ikke forbundet…
+  <div class="gauge-wrap">
+    <svg viewBox="0 0 300 300">
+      <circle cx="150" cy="150" r="128" fill="none" stroke="var(--line)" stroke-width="2"/>
+      <g id="ticks"></g>
+      <line id="needle" class="needle" x1="150" y1="150" x2="150" y2="46"/>
+      <circle class="hub" cx="150" cy="150" r="10"/>
+    </svg>
+    <div class="gear" id="gearLabel">N</div>
+    <div class="readout">
+      <div class="kmh" id="kmh">0</div>
+      <div class="kmh-unit">KM/H</div>
     </div>
   </div>
 
-  <script>
-    // MQTT – uændret
-    const client = mqtt.connect(
-      "wss://74476603474245c3af4012fa421215a2.s1.eu.hivemq.cloud:8884/mqtt",
-      {
-        username: "Qwit_ED",
-        password: "GlemDetDu1",
-        clean: true,
-        connectTimeout: 4000,
-        reconnectPeriod: 1000
+  <div class="status-row">
+    <div class="dot" id="gpsDot"></div>
+    <span id="statusText">GPS INAKTIV</span>
+  </div>
+
+  <button id="toggle">Start motor</button>
+
+  <div class="note">Syntetisk motorlyd genereret i browseren — ingen lydfiler. Volumen og tonehøjde følger din GPS-hastighed og acceleration. Betjen kun skærmen mens du holder stille.</div>
+
+<script>
+(function() {
+  const toggleBtn = document.getElementById('toggle');
+  const kmhEl = document.getElementById('kmh');
+  const gearEl = document.getElementById('gearLabel');
+  const needle = document.getElementById('needle');
+  const gpsDot = document.getElementById('gpsDot');
+  const statusText = document.getElementById('statusText');
+  const ticksGroup = document.getElementById('ticks');
+
+  // ---- draw gauge ticks (0..260 degree sweep, 0-8 "RPM x1000" style) ----
+  const cx = 150, cy = 150, rOuter = 128, rInner = 112;
+  const startAngle = -220, endAngle = 40; // degrees, gauge sweep
+  const totalTicks = 20;
+  for (let i = 0; i <= totalTicks; i++) {
+    const t = i / totalTicks;
+    const angle = (startAngle + t * (endAngle - startAngle)) * Math.PI / 180;
+    const x1 = cx + rInner * Math.cos(angle);
+    const y1 = cy + rInner * Math.sin(angle);
+    const x2 = cx + rOuter * Math.cos(angle);
+    const y2 = cy + rOuter * Math.sin(angle);
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', x1); line.setAttribute('y1', y1);
+    line.setAttribute('x2', x2); line.setAttribute('y2', y2);
+    line.setAttribute('class', 'tick' + (t > 0.82 ? ' hot' : ''));
+    ticksGroup.appendChild(line);
+  }
+  // needle rotation: map 0..1 (rpm fraction) to startAngle..endAngle, needle default points to -90 (up), so offset by +90
+  function setNeedle(frac) {
+    const angle = startAngle + frac * (endAngle - startAngle) + 90;
+    needle.setAttribute('transform', `rotate(${angle} 150 150)`);
+  }
+  setNeedle(0.06);
+
+  // ---- gear thresholds (km/h) ----
+  const gearSpeeds = [0, 22, 45, 72, 105, 145, 190, 999];
+  function gearInfo(speed) {
+    let g = 1;
+    for (let i = 1; i < gearSpeeds.length; i++) {
+      if (speed >= gearSpeeds[i]) g = i + 1; else break;
+    }
+    g = Math.min(g, gearSpeeds.length - 1);
+    const lo = gearSpeeds[g - 1], hi = gearSpeeds[g];
+    const frac = Math.max(0, Math.min(1, (speed - lo) / (hi - lo)));
+    return { gear: g, frac };
+  }
+
+  // ---- audio engine ----
+  let audioCtx = null;
+  let master, saw1, saw2, sub, filter, noiseSrc, noiseFilter, noiseGain, lfo, lfoGain;
+  let running = false;
+
+  function buildAudio() {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    master = audioCtx.createGain();
+    master.gain.value = 0;
+    master.connect(audioCtx.destination);
+
+    // main tone: two detuned sawtooths
+    saw1 = audioCtx.createOscillator();
+    saw1.type = 'sawtooth';
+    saw1.frequency.value = 60;
+
+    saw2 = audioCtx.createOscillator();
+    saw2.type = 'sawtooth';
+    saw2.frequency.value = 60.4;
+
+    // sub oscillator for low rumble
+    sub = audioCtx.createOscillator();
+    sub.type = 'square';
+    sub.frequency.value = 30;
+
+    filter = audioCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 500;
+    filter.Q.value = 1.2;
+
+    const toneGain = audioCtx.createGain();
+    toneGain.gain.value = 0.9;
+
+    saw1.connect(filter);
+    saw2.connect(filter);
+    sub.connect(filter);
+    filter.connect(toneGain);
+    toneGain.connect(master);
+
+    // idle wobble LFO on filter cutoff
+    lfo = audioCtx.createOscillator();
+    lfo.frequency.value = 7;
+    lfoGain = audioCtx.createGain();
+    lfoGain.gain.value = 15;
+    lfo.connect(lfoGain);
+    lfoGain.connect(filter.frequency);
+
+    // road/wind noise bed
+    const bufSize = audioCtx.sampleRate * 2;
+    const noiseBuffer = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+    const data = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+    noiseSrc = audioCtx.createBufferSource();
+    noiseSrc.buffer = noiseBuffer;
+    noiseSrc.loop = true;
+
+    noiseFilter = audioCtx.createBiquadFilter();
+    noiseFilter.type = 'bandpass';
+    noiseFilter.frequency.value = 800;
+    noiseFilter.Q.value = 0.6;
+
+    noiseGain = audioCtx.createGain();
+    noiseGain.gain.value = 0;
+
+    noiseSrc.connect(noiseFilter);
+    noiseFilter.connect(noiseGain);
+    noiseGain.connect(master);
+
+    [saw1, saw2, sub, lfo, noiseSrc].forEach(n => n.start());
+    master.gain.setTargetAtTime(0.55, audioCtx.currentTime, 0.4);
+  }
+
+  function stopAudio() {
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    master.gain.setTargetAtTime(0, now, 0.15);
+    setTimeout(() => {
+      [saw1, saw2, sub, lfo, noiseSrc].forEach(n => { try { n.stop(); } catch (e) {} });
+      audioCtx.close();
+      audioCtx = null;
+    }, 400);
+  }
+
+  // map engine "rpm fraction" (0..1 within current gear) + throttle punch to audio params
+  function applyEngineState(rpmFrac, throttle, speedKmh) {
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    const idle = 42, redline = 210;
+    const baseFreq = idle + rpmFrac * (redline - idle);
+    const punch = throttle * 18;
+
+    saw1.frequency.setTargetAtTime(baseFreq + punch, now, 0.05);
+    saw2.frequency.setTargetAtTime((baseFreq + punch) * 1.006, now, 0.05);
+    sub.frequency.setTargetAtTime((baseFreq + punch) / 2, now, 0.05);
+
+    const cutoff = 300 + rpmFrac * 2600 + throttle * 900;
+    filter.frequency.setTargetAtTime(cutoff, now, 0.08);
+
+    const noiseLevel = Math.min(0.35, (speedKmh / 220) * 0.35);
+    noiseGain.gain.setTargetAtTime(noiseLevel, now, 0.3);
+    noiseFilter.frequency.setTargetAtTime(500 + speedKmh * 12, now, 0.3);
+
+    lfoGain.gain.setTargetAtTime(speedKmh < 5 ? 15 : 4, now, 0.3);
+  }
+
+  // ---- GPS tracking ----
+  let watchId = null;
+  let lastPos = null, lastTime = null;
+  let smoothedSpeed = 0; // km/h
+  let smoothedAccel = 0; // km/h per second, clamped display value
+
+  function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  function onPosition(pos) {
+    gpsDot.classList.add('live');
+    gpsDot.classList.remove('err');
+    statusText.textContent = 'GPS AKTIV';
+
+    const now = pos.timestamp;
+    let rawSpeedKmh = null;
+
+    if (typeof pos.coords.speed === 'number' && pos.coords.speed >= 0) {
+      rawSpeedKmh = pos.coords.speed * 3.6;
+    } else if (lastPos && lastTime) {
+      const dt = (now - lastTime) / 1000;
+      if (dt > 0.2) {
+        const dist = haversine(lastPos.latitude, lastPos.longitude, pos.coords.latitude, pos.coords.longitude);
+        rawSpeedKmh = (dist / dt) * 3.6;
       }
-    );
-
-    const statusEl = document.getElementById("status");
-    const tempEl = document.getElementById("temp");
-
-    client.on("connect", () => {
-      statusEl.textContent = "Forbundet til Saabrina ✅";
-
-      // 🔥 Abonner på temperatur
-      client.subscribe("saabrina/temperature");
-    });
-
-    client.on("reconnect", () => {
-      statusEl.textContent = "Genforbinder…";
-    });
-
-    client.on("error", () => {
-      statusEl.textContent = "Forbindelsesfejl ❌";
-    });
-
-    // 🔥 Modtag temperatur
-    client.on("message", (topic, message) => {
-      if (topic === "saabrina/temperature") {
-        tempEl.textContent = Math.round(parseFloat(message.toString()));
-      }
-    });
-
-    function sendMessage1() {
-      client.publish("emil/test", "1");
-      statusEl.textContent = "TÆNDT 🔥";
     }
 
-    function sendMessage2() {
-      client.publish("emil/test", "0");
-      statusEl.textContent = "SLUKKET ⛔";
+    if (rawSpeedKmh !== null && isFinite(rawSpeedKmh)) {
+      const dtSec = lastTime ? Math.max(0.2, (now - lastTime) / 1000) : 1;
+      const accel = (rawSpeedKmh - smoothedSpeed) / dtSec;
+      smoothedAccel = smoothedAccel * 0.6 + accel * 0.4;
+      smoothedSpeed = smoothedSpeed * 0.65 + rawSpeedKmh * 0.35;
     }
 
-    function goToSoundboard() {
-      window.location.href = "soundboard.html";
+    lastPos = pos.coords;
+    lastTime = now;
+  }
+
+  function onGpsError(err) {
+    gpsDot.classList.remove('live');
+    gpsDot.classList.add('err');
+    statusText.textContent = 'GPS FEJL: ' + (err.message || 'ukendt');
+  }
+
+  function startGps() {
+    if (!('geolocation' in navigator)) {
+      statusText.textContent = 'GPS IKKE TILGÆNGELIG';
+      gpsDot.classList.add('err');
+      return;
     }
-  </script>
+    watchId = navigator.geolocation.watchPosition(onPosition, onGpsError, {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 8000
+    });
+  }
+  function stopGps() {
+    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+    lastPos = null; lastTime = null;
+    gpsDot.classList.remove('live', 'err');
+    statusText.textContent = 'GPS INAKTIV';
+  }
+
+  // ---- render / animation loop ----
+  let rafId = null;
+  const gearNames = { 1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7' };
+
+  function tick() {
+    const speed = Math.max(0, smoothedSpeed);
+    const throttle = Math.max(0, Math.min(1, smoothedAccel / 6));
+
+    const { gear, frac } = gearInfo(speed);
+    const rpmFrac = Math.max(0.05, frac);
+
+    kmhEl.textContent = Math.round(speed);
+    gearEl.textContent = gearNames[gear] || gear;
+    setNeedle(rpmFrac);
+
+    if (running) applyEngineState(rpmFrac, throttle, speed);
+
+    rafId = requestAnimationFrame(tick);
+  }
+  tick();
+
+  // ---- toggle button ----
+  toggleBtn.addEventListener('click', () => {
+    if (!running) {
+      running = true;
+      toggleBtn.textContent = 'Stop motor';
+      toggleBtn.classList.add('on');
+      buildAudio();
+      startGps();
+    } else {
+      running = false;
+      toggleBtn.textContent = 'Start motor';
+      toggleBtn.classList.remove('on');
+      stopAudio();
+      stopGps();
+      smoothedSpeed = 0;
+      smoothedAccel = 0;
+    }
+  });
+})();
+</script>
 </body>
 </html>
